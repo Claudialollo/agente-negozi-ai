@@ -40,8 +40,8 @@ async function createAppointment(customerName, service, dateTime) {
     calendarId: process.env.GOOGLE_CALENDAR_ID,
     requestBody: {
       summary: `${customerName} — ${service}`,
-      start: { dateTime: start.toISOString() },
-      end: { dateTime: end.toISOString() },
+      start: { dateTime: start.toISOString(), timeZone: "Europe/Rome" },
+      end: { dateTime: end.toISOString(), timeZone: "Europe/Rome" },
     },
   });
 }
