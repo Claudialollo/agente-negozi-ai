@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import express from "express";
+import { google } from "googleapis";
 
 const app = express();
 app.use(express.json());
@@ -7,13 +8,55 @@ app.use(express.json());
 const client = new Anthropic();
 const conversations = {};
 
+const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+const auth = new google.auth.GoogleAuth({
+  credentials,
+  scopes: ["https://www.googleapis.com/auth/calendar"],
+});
+const calendar = google.calendar({ version: "v3", auth });
+
+async function getAvailableSlots(date) {
+  const startOfDay = new Date(date);
+  startOfDay.setHours(9, 0, 0, 0);
+  const endOfDay = new Date(date);
+  endOfDay.setHours(19, 0, 0, 0);
+
+  const response = await calendar.events.list({
+    calendarId: process.env.GOOGLE_CALENDAR_ID,
+    timeMin: startOfDay.toISOString(),
+    timeMax: endOfDay.toISOString(),
+    singleEvents: true,
+    orderBy: "startTime",
+  });
+
+  return response.data.items || [];
+}
+
+async function createAppointment(customerName, service, dateTime) {
+  const start = new Date(dateTime);
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+
+  await calendar.events.insert({
+    calendarId: process.env.GOOGLE_CALENDAR_ID,
+    requestBody: {
+      summary: `${customerName} — ${service}`,
+      start: { dateTime: start.toISOString() },
+      end: { dateTime: end.toISOString() },
+    },
+  });
+}
+
 const businesses = {
-  "negozio1": `Sei l'assistente virtuale di [NOME NEGOZIO].
-Orari: [es. Lun-Sab 9:00-19:00].
-Servizi: [elenca servizi e prezzi].
-Tono: cordiale e professionale, usa il tu.
-Se non sai rispondere, di' che passerai il messaggio al titolare.`
+  "negozio1": `Sei l'assistente virtuale di Barber Shop Roma.
+Orari: Lun-Sab 9:00-19:00. Chiuso domenica.
+Servizi: Taglio uomo €15, Barba €10, Taglio + Barba €22.
+Quando un cliente chiede disponibilità per una data, controllala sempre prima di confermare.
+Quando confermi una prenotazione chiedi sempre nome, servizio e orario preciso.
+Dopo aver raccolto tutti i dati scrivi esattamente: PRENOTA:[nome],[servizio],[data e ora in formato ISO]
+Tono: cordiale e professionale, usa il tu.`
 };
+
+const pendingConfirmations = {};
 
 app.get("/webhook/:businessId", (req, res) => {
   const mode = req.query["hub.mode"];
@@ -40,16 +83,45 @@ app.post("/webhook/:businessId", async (req, res) => {
 
   const systemPrompt = businesses[businessId] || "Sei un assistente virtuale utile.";
 
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const slots = await getAvailableSlots(tomorrow);
+  const slotsInfo = slots.length > 0
+    ? `Appuntamenti già presi domani: ${slots.map(e => e.summary + " alle " + new Date(e.start.dateTime).getHours() + ":00").join(", ")}`
+    : "Domani non ci sono ancora appuntamenti.";
+
+  const fullSystem = systemPrompt + "\n\n" + slotsInfo;
+
   const response = await client.messages.create({
     model: "claude-sonnet-4-5",
     max_tokens: 300,
-    system: systemPrompt,
+    system: fullSystem,
     messages: conversations[userId].slice(-10)
   });
 
-  const reply = response.content[0].text;
-  conversations[userId].push({ role: "assistant", content: reply });
+  let reply = response.content[0].text;
 
+  if (reply.includes("PRENOTA:")) {
+    const prenotaMatch = reply.match(/PRENOTA:([^,]+),([^,]+),(.+)/);
+    if (prenotaMatch) {
+      const [, nome, servizio, dataOra] = prenotaMatch;
+      await createAppointment(nome.trim(), servizio.trim(), dataOra.trim());
+      reply = reply.replace(/PRENOTA:.+/, "").trim();
+      reply += "\n\nPrenotazione confermata! Ti aspettiamo.";
+
+      pendingConfirmations[userId] = setTimeout(async () => {
+        await sendWhatsAppMessage(userId, "Ciao! Volevi confermare la prenotazione? Fammi sapere!");
+        delete pendingConfirmations[userId];
+      }, 60 * 60 * 1000);
+    }
+  }
+
+  conversations[userId].push({ role: "assistant", content: reply });
+  await sendWhatsAppMessage(userId, reply);
+  res.sendStatus(200);
+});
+
+async function sendWhatsAppMessage(to, text) {
   await fetch(`https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`, {
     method: "POST",
     headers: {
@@ -58,13 +130,11 @@ app.post("/webhook/:businessId", async (req, res) => {
     },
     body: JSON.stringify({
       messaging_product: "whatsapp",
-      to: userId,
+      to,
       type: "text",
-      text: { body: reply }
+      text: { body: text }
     })
   });
-
-  res.sendStatus(200);
-});
+}
 
 app.listen(3000, () => console.log("Agente attivo sulla porta 3000"));
