@@ -17,9 +17,9 @@ const calendar = google.calendar({ version: "v3", auth });
 
 async function getAvailableSlots(date) {
   const startOfDay = new Date(date);
-  startOfDay.setHours(9, 0, 0, 0);
+  startOfDay.setHours(7, 0, 0, 0);
   const endOfDay = new Date(date);
-  endOfDay.setHours(19, 0, 0, 0);
+  endOfDay.setHours(17, 0, 0, 0);
 
   const response = await calendar.events.list({
     calendarId: process.env.GOOGLE_CALENDAR_ID,
