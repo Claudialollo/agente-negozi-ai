@@ -57,6 +57,8 @@ Tono: cordiale e professionale, usa il tu.`
 };
 
 const pendingConfirmations = {};
+const pendingConfirmations = {};
+const ownerPhones = process.env.OWNER_PHONES?.split(",") || [];
 
 app.get("/webhook/:businessId", (req, res) => {
   const mode = req.query["hub.mode"];
@@ -76,6 +78,7 @@ app.post("/webhook/:businessId", async (req, res) => {
   if (!message || message.type !== "text") return res.sendStatus(200);
 
   const userId = message.from;
+  const isOwner = ownerPhones.includes(userId);
   const userText = message.text.body;
 
   if (!conversations[userId]) conversations[userId] = [];
