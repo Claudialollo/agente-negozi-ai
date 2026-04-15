@@ -41,7 +41,7 @@ app.post("/webhook/:businessId", async (req, res) => {
   const systemPrompt = businesses[businessId] || "Sei un assistente virtuale utile.";
 
   const response = await client.messages.create({
-    model: "claude-sonnet-4-20250514",
+    model: "claude-sonnet-4-5",
     max_tokens: 300,
     system: systemPrompt,
     messages: conversations[userId].slice(-10)
