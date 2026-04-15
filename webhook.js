@@ -17,9 +17,9 @@ const calendar = google.calendar({ version: "v3", auth });
 
 async function getAvailableSlots(date) {
   const startOfDay = new Date(date);
-  startOfDay.setHours(7, 0, 0, 0);
+  startOfDay.setHours(9, 0, 0, 0);
   const endOfDay = new Date(date);
-  endOfDay.setHours(17, 0, 0, 0);
+  endOfDay.setHours(19, 0, 0, 0);
 
   const response = await calendar.events.list({
     calendarId: process.env.GOOGLE_CALENDAR_ID,
@@ -27,23 +27,57 @@ async function getAvailableSlots(date) {
     timeMax: endOfDay.toISOString(),
     singleEvents: true,
     orderBy: "startTime",
+    timeZone: "Europe/Rome",
   });
 
   return response.data.items || [];
 }
 
-async function createAppointment(customerName, service, dateTime) {
-  const start = new Date(dateTime);
+async function createAppointment(customerName, service, dateTimeLocal) {
+  const [datePart, timePart] = dateTimeLocal.split("T");
+  const [year, month, day] = datePart.split("-").map(Number);
+  const [hour, minute] = timePart.replace("Z","").split(":").map(Number);
+
+  const start = new Date(Date.UTC(year, month - 1, day, hour - 2, minute));
   const end = new Date(start.getTime() + 60 * 60 * 1000);
 
-  await calendar.events.insert({
+  const event = await calendar.events.insert({
     calendarId: process.env.GOOGLE_CALENDAR_ID,
     requestBody: {
       summary: `${customerName} — ${service}`,
-      start: { dateTime: start.toISOString() },
-      end: { dateTime: end.toISOString() },
+      start: { dateTime: start.toISOString(), timeZone: "Europe/Rome" },
+      end: { dateTime: end.toISOString(), timeZone: "Europe/Rome" },
     },
   });
+
+  return event.data.id;
+}
+
+async function deleteAppointmentByName(customerName) {
+  const now = new Date();
+  const future = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+  const response = await calendar.events.list({
+    calendarId: process.env.GOOGLE_CALENDAR_ID,
+    timeMin: now.toISOString(),
+    timeMax: future.toISOString(),
+    singleEvents: true,
+    orderBy: "startTime",
+  });
+
+  const events = response.data.items || [];
+  const match = events.find(e =>
+    e.summary?.toLowerCase().includes(customerName.toLowerCase())
+  );
+
+  if (match) {
+    await calendar.events.delete({
+      calendarId: process.env.GOOGLE_CALENDAR_ID,
+      eventId: match.id,
+    });
+    return true;
+  }
+  return false;
 }
 
 const businesses = {
@@ -52,9 +86,18 @@ Orari: Lun-Sab 9:00-19:00. Chiuso domenica.
 Servizi: Taglio uomo €15, Barba €10, Taglio + Barba €22.
 Quando un cliente chiede disponibilità per una data, controllala sempre prima di confermare.
 Quando confermi una prenotazione chiedi sempre nome, servizio e orario preciso.
-Dopo aver raccolto nome, servizio e orario, DEVI scrivere obbligatoriamente questa riga esatta nel tuo messaggio:
-PRENOTA:Mario,Taglio uomo,2026-04-16T13:00:00Z
-Usa sempre questo formato esatto. Non cambiare nulla. Metti questa riga alla fine del messaggio.
+
+Per CREARE una prenotazione, scrivi ESATTAMENTE alla fine del messaggio:
+PRENOTA:Nome,Servizio,2026-04-16T15:00:00
+Usa l'ora italiana esatta (es. 15:00 per le 15 di pomeriggio).
+
+Per CANCELLARE una prenotazione, scrivi ESATTAMENTE alla fine del messaggio:
+CANCELLA:Nome
+
+Per MODIFICARE una prenotazione, prima cancella quella vecchia poi crea quella nuova:
+CANCELLA:Nome
+PRENOTA:Nome,Servizio,2026-04-16T16:00:00
+
 Tono: cordiale e professionale, usa il tu.`
 };
 
@@ -87,32 +130,48 @@ app.post("/webhook/:businessId", async (req, res) => {
 
   const systemPrompt = businesses[businessId] || "Sei un assistente virtuale utile.";
 
+  const today = new Date();
+  const slots = await getAvailableSlots(today);
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
-  const slots = await getAvailableSlots(tomorrow);
-  const slotsInfo = slots.length > 0
-    ? `Appuntamenti già presi domani: ${slots.map(e => e.summary + " alle " + new Date(e.start.dateTime).getHours() + ":00").join(", ")}`
-    : "Domani non ci sono ancora appuntamenti.";
+  const slotsTomorrow = await getAvailableSlots(tomorrow);
+
+  const slotsInfo = `
+Appuntamenti oggi: ${slots.length > 0 ? slots.map(e => e.summary + " alle " + new Date(e.start.dateTime).toLocaleTimeString("it-IT", {hour: "2-digit", minute: "2-digit", timeZone: "Europe/Rome"})).join(", ") : "nessuno"}
+Appuntamenti domani: ${slotsTomorrow.length > 0 ? slotsTomorrow.map(e => e.summary + " alle " + new Date(e.start.dateTime).toLocaleTimeString("it-IT", {hour: "2-digit", minute: "2-digit", timeZone: "Europe/Rome"})).join(", ") : "nessuno"}`;
 
   const fullSystem = systemPrompt + "\n\n" + slotsInfo;
 
   const response = await client.messages.create({
     model: "claude-sonnet-4-5",
-    max_tokens: 300,
+    max_tokens: 400,
     system: fullSystem,
     messages: conversations[userId].slice(-10)
   });
 
   let reply = response.content[0].text;
 
+  if (reply.includes("CANCELLA:")) {
+    const cancelMatch = reply.match(/CANCELLA:([^\n]+)/);
+    if (cancelMatch) {
+      const nome = cancelMatch[1].trim();
+      const deleted = await deleteAppointmentByName(nome);
+      reply = reply.replace(/CANCELLA:[^\n]+/g, "").trim();
+      if (!deleted) {
+        reply += "\n\n(Nota: non ho trovato un appuntamento con questo nome sul calendario.)";
+      }
+    }
+  }
+
   if (reply.includes("PRENOTA:")) {
-    const prenotaMatch = reply.match(/PRENOTA:([^,]+),([^,]+),(.+)/);
+    const prenotaMatch = reply.match(/PRENOTA:([^,]+),([^,]+),([^\n]+)/);
     if (prenotaMatch) {
       const [, nome, servizio, dataOra] = prenotaMatch;
       await createAppointment(nome.trim(), servizio.trim(), dataOra.trim());
-      reply = reply.replace(/PRENOTA:.+/, "").trim();
+      reply = reply.replace(/PRENOTA:[^\n]+/g, "").trim();
       reply += "\n\nPrenotazione confermata! Ti aspettiamo.";
 
+      if (pendingConfirmations[userId]) clearTimeout(pendingConfirmations[userId]);
       pendingConfirmations[userId] = setTimeout(async () => {
         await sendWhatsAppMessage(userId, "Ciao! Volevi confermare la prenotazione? Fammi sapere!");
         delete pendingConfirmations[userId];
