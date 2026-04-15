@@ -57,7 +57,6 @@ Tono: cordiale e professionale, usa il tu.`
 };
 
 const pendingConfirmations = {};
-const pendingConfirmations = {};
 const ownerPhones = process.env.OWNER_PHONES?.split(",") || [];
 
 app.get("/webhook/:businessId", (req, res) => {
