@@ -189,13 +189,8 @@ ${business.ownerName} può chiederti di:
 - Chiedere info su un cliente specifico
 - Chiedere un riepilogo settimanale o mensile — scrivi GENERA_PDF:settimana oppure GENERA_PDF:mese
 
-IMPORTANTE per i PDF:
-Quando il titolare chiede un PDF o un riepilogo settimanale/mensile:
-1. Mostra il riepilogo testuale degli appuntamenti
-2. Scrivi GENERA_PDF:settimana o GENERA_PDF:mese alla fine
-3. Chiedi: "Vuoi ricevere il PDF anche via email?"
-Se il titolare risponde sì alla email, scrivi INVIA_EMAIL_PDF alla fine del messaggio.
-Se il titolare risponde no, non fare nulla.
+Quando generi un riepilogo, mostra sempre il testo e poi chiedi:
+"Vuoi ricevere il PDF anche via email? Rispondi sì o no."
 
 REGOLA: Non accettare mai date passate rispetto a ${today_iso}.
 
@@ -259,12 +254,40 @@ app.post("/webhook/:businessId", async (req, res) => {
   if (!message || message.type !== "text") return res.sendStatus(200);
 
   const userId = message.from;
-  const userText = message.text.body;
+  const userText = message.text.body.toLowerCase().trim();
   const business = businesses[businessId];
 
   if (!business) return res.sendStatus(200);
 
   const isOwner = business.ownerPhones.includes(userId);
+
+  // Gestione risposta sì/no per PDF in attesa
+  if (isOwner && pendingPDF[userId]) {
+    if (userText === "sì" || userText === "si" || userText === "s" || userText === "yes") {
+      const { pdfBuffer, titoloPDF, tipo, today_iso } = pendingPDF[userId];
+      try {
+        await transporter.sendMail({
+          from: process.env.GMAIL_USER,
+          to: process.env.OWNER_EMAIL,
+          subject: titoloPDF,
+          text: `Ciao ${business.ownerName}! In allegato trovi il PDF con gli appuntamenti della ${tipo}.`,
+          attachments: [{
+            filename: `${tipo}_${today_iso}.pdf`,
+            content: pdfBuffer,
+          }]
+        });
+        delete pendingPDF[userId];
+        await sendWhatsAppMessage(userId, `PDF inviato! Controlla la tua email ${process.env.OWNER_EMAIL}.`);
+      } catch (err) {
+        await sendWhatsAppMessage(userId, "Errore nell'invio email. Riprova tra poco.");
+      }
+      return res.sendStatus(200);
+    } else if (userText === "no" || userText === "n") {
+      delete pendingPDF[userId];
+      await sendWhatsAppMessage(userId, "Ok, nessuna email. A presto!");
+      return res.sendStatus(200);
+    }
+  }
 
   const today = new Date();
   const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
@@ -287,7 +310,7 @@ app.post("/webhook/:businessId", async (req, res) => {
     : getClientSystemPrompt(business, slotsInfo, today_date, today_iso);
 
   if (!conversations[userId]) conversations[userId] = [];
-  conversations[userId].push({ role: "user", content: userText });
+  conversations[userId].push({ role: "user", content: message.text.body });
 
   const response = await client.messages.create({
     model: "claude-sonnet-4-5",
@@ -309,28 +332,8 @@ app.post("/webhook/:businessId", async (req, res) => {
       const pdfBuffer = await generatePDF(events, titoloPDF);
 
       pendingPDF[userId] = { pdfBuffer, titoloPDF, tipo, today_iso };
-
       reply = reply.replace(/GENERA_PDF:(settimana|mese)/, "").trim();
     }
-  }
-
-  if (reply.includes("INVIA_EMAIL_PDF") && isOwner && pendingPDF[userId]) {
-    const { pdfBuffer, titoloPDF, tipo, today_iso: iso } = pendingPDF[userId];
-
-    await transporter.sendMail({
-      from: process.env.GMAIL_USER,
-      to: process.env.OWNER_EMAIL,
-      subject: titoloPDF,
-      text: `Ciao ${business.ownerName}! In allegato trovi il PDF con gli appuntamenti della ${tipo}.`,
-      attachments: [{
-        filename: `${tipo}_${iso}.pdf`,
-        content: pdfBuffer,
-      }]
-    });
-
-    delete pendingPDF[userId];
-    reply = reply.replace(/INVIA_EMAIL_PDF/, "").trim();
-    reply += "\n\nPDF inviato via email!";
   }
 
   if (reply.includes("CANCELLA:")) {
