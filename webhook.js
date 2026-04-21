@@ -81,30 +81,64 @@ async function deleteAppointmentByName(customerName) {
 }
 
 const businesses = {
-  "negozio1": `Sei l'assistente virtuale di Barber Shop Roma.
-Orari: Lun-Sab 9:00-19:00. Chiuso domenica.
-Servizi: Taglio uomo €15, Barba €10, Taglio + Barba €22.
-Quando un cliente chiede disponibilità per una data, controllala sempre prima di confermare.
-Quando confermi una prenotazione chiedi sempre nome, servizio e orario preciso.
-
-REGOLA FONDAMENTALE: La data di oggi ti viene fornita ad ogni messaggio. Qualsiasi data precedente a oggi è nel passato. Non puoi accettare prenotazioni per il passato. Se il cliente chiede una data passata, rispondi IMMEDIATAMENTE che non è possibile e suggerisci una data futura. Non chiedere altri dettagli, non andare avanti con la prenotazione.
-
-Per CREARE una prenotazione, scrivi ESATTAMENTE alla fine del messaggio:
-PRENOTA:Nome,Servizio,YYYY-MM-DDTHH:MM:00
-Usa sempre la data corretta basandoti sulla data di oggi che ti viene fornita.
-
-Per CANCELLARE una prenotazione, scrivi ESATTAMENTE alla fine del messaggio:
-CANCELLA:Nome
-
-Per MODIFICARE una prenotazione, prima cancella quella vecchia poi crea quella nuova:
-CANCELLA:Nome
-PRENOTA:Nome,Servizio,YYYY-MM-DDTHH:MM:00
-
-Tono: cordiale e professionale, usa il tu.`
+  "negozio1": {
+    name: "Barber Shop Roma",
+    ownerName: "Marco",
+    ownerPhones: process.env.OWNER_PHONES?.split(",") || [],
+    calendarId: process.env.GOOGLE_CALENDAR_ID,
+    hours: "Lun-Sab 9:00-19:00. Chiuso domenica.",
+    services: "Taglio uomo €15, Barba €10, Taglio + Barba €22.",
+  }
 };
 
 const pendingConfirmations = {};
-const ownerPhones = process.env.OWNER_PHONES?.split(",") || [];
+
+function getOwnerSystemPrompt(business, slotsInfo, today_date, today_iso) {
+  return `Sei l'assistente personale di ${business.ownerName}, titolare di ${business.name}.
+Stai parlando con ${business.ownerName} — il titolare. Chiamalo sempre per nome.
+Oggi è ${today_date} (${today_iso}).
+
+${business.ownerName} può chiederti di:
+- Aggiungere appuntamenti presi per telefono — scrivi PRENOTA:Nome,Servizio,YYYY-MM-DDTHH:MM:00
+- Cancellare appuntamenti — scrivi CANCELLA:Nome
+- Modificare appuntamenti — scrivi CANCELLA:Nome poi PRENOTA:Nome,Servizio,YYYY-MM-DDTHH:MM:00
+- Vedere gli appuntamenti di oggi e domani — li trovi qui sotto
+- Chiedere info su un cliente specifico
+
+REGOLA: Non accettare mai date passate rispetto a ${today_iso}.
+
+${slotsInfo}`;
+}
+
+function getClientSystemPrompt(business, slotsInfo, today_date, today_iso) {
+  return `Sei l'assistente virtuale di ${business.name}.
+Orari: ${business.hours}
+Servizi: ${business.services}
+Oggi è ${today_date} (${today_iso}).
+
+Puoi aiutare il cliente a:
+- Controllare disponibilità
+- Prenotare un appuntamento
+- Cancellare o modificare il suo appuntamento
+
+Quando confermi una prenotazione chiedi sempre nome, servizio e orario preciso.
+
+REGOLA FONDAMENTALE: Non accettare mai prenotazioni per date precedenti a ${today_iso}. Se il cliente chiede una data passata, digli subito che non è possibile e suggerisci una data futura.
+
+Per CREARE una prenotazione scrivi ESATTAMENTE alla fine del messaggio:
+PRENOTA:Nome,Servizio,YYYY-MM-DDTHH:MM:00
+
+Per CANCELLARE una prenotazione scrivi ESATTAMENTE alla fine del messaggio:
+CANCELLA:Nome
+
+Per MODIFICARE una prenotazione:
+CANCELLA:Nome
+PRENOTA:Nome,Servizio,YYYY-MM-DDTHH:MM:00
+
+Tono: cordiale e professionale, usa il tu.
+
+${slotsInfo}`;
+}
 
 app.get("/webhook/:businessId", (req, res) => {
   const mode = req.query["hub.mode"];
@@ -124,34 +158,37 @@ app.post("/webhook/:businessId", async (req, res) => {
   if (!message || message.type !== "text") return res.sendStatus(200);
 
   const userId = message.from;
-  const isOwner = ownerPhones.includes(userId);
   const userText = message.text.body;
+  const business = businesses[businessId];
+
+  if (!business) return res.sendStatus(200);
+
+  const isOwner = business.ownerPhones.includes(userId);
 
   const today = new Date();
   const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-
-  if (!conversations[userId]) conversations[userId] = [];
-  conversations[userId].push({ role: "user", content: userText });
-
-  const systemPrompt = businesses[businessId] || "Sei un assistente virtuale utile.";
+  const today_date = today.toLocaleDateString("it-IT", {timeZone: "Europe/Rome", weekday: "long", year: "numeric", month: "long", day: "numeric"});
+  const today_iso = today.toISOString().split("T")[0];
 
   const slots = await getAvailableSlots(today);
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
   const slotsTomorrow = await getAvailableSlots(tomorrow);
 
-  const slotsInfo = `
-Appuntamenti oggi: ${slots.length > 0 ? slots.map(e => e.summary + " alle " + new Date(e.start.dateTime).toLocaleTimeString("it-IT", {hour: "2-digit", minute: "2-digit", timeZone: "Europe/Rome"})).join(", ") : "nessuno"}
+  const slotsInfo = `Appuntamenti oggi: ${slots.length > 0 ? slots.map(e => e.summary + " alle " + new Date(e.start.dateTime).toLocaleTimeString("it-IT", {hour: "2-digit", minute: "2-digit", timeZone: "Europe/Rome"})).join(", ") : "nessuno"}
 Appuntamenti domani: ${slotsTomorrow.length > 0 ? slotsTomorrow.map(e => e.summary + " alle " + new Date(e.start.dateTime).toLocaleTimeString("it-IT", {hour: "2-digit", minute: "2-digit", timeZone: "Europe/Rome"})).join(", ") : "nessuno"}`;
 
-  const today_date = new Date().toLocaleDateString("it-IT", {timeZone: "Europe/Rome", weekday: "long", year: "numeric", month: "long", day: "numeric"});
-  const today_iso = today.toISOString().split("T")[0];
-  const fullSystem = systemPrompt + "\n\nOggi è " + today_date + " (" + today_iso + "). Non accettare date precedenti a " + today_iso + ".\n\n" + slotsInfo;
+  const systemPrompt = isOwner
+    ? getOwnerSystemPrompt(business, slotsInfo, today_date, today_iso)
+    : getClientSystemPrompt(business, slotsInfo, today_date, today_iso);
+
+  if (!conversations[userId]) conversations[userId] = [];
+  conversations[userId].push({ role: "user", content: userText });
 
   const response = await client.messages.create({
     model: "claude-sonnet-4-5",
     max_tokens: 400,
-    system: fullSystem,
+    system: systemPrompt,
     messages: conversations[userId].slice(-10)
   });
 
@@ -164,7 +201,7 @@ Appuntamenti domani: ${slotsTomorrow.length > 0 ? slotsTomorrow.map(e => e.summa
       const deleted = await deleteAppointmentByName(nome);
       reply = reply.replace(/CANCELLA:[^\n]+/g, "").trim();
       if (!deleted) {
-        reply += "\n\n(Nota: non ho trovato un appuntamento con questo nome sul calendario.)";
+        reply += "\n\n(Appuntamento non trovato sul calendario.)";
       }
     }
   }
@@ -185,13 +222,15 @@ Appuntamenti domani: ${slotsTomorrow.length > 0 ? slotsTomorrow.map(e => e.summa
 
       await createAppointment(nome.trim(), servizio.trim(), dataOra.trim());
       reply = reply.replace(/PRENOTA:[^\n]+/g, "").trim();
-      reply += "\n\nPrenotazione confermata! Ti aspettiamo.";
+      reply += "\n\nPrenotazione confermata!";
 
       if (pendingConfirmations[userId]) clearTimeout(pendingConfirmations[userId]);
-      pendingConfirmations[userId] = setTimeout(async () => {
-        await sendWhatsAppMessage(userId, "Ciao! Volevi confermare la prenotazione? Fammi sapere!");
-        delete pendingConfirmations[userId];
-      }, 60 * 60 * 1000);
+      if (!isOwner) {
+        pendingConfirmations[userId] = setTimeout(async () => {
+          await sendWhatsAppMessage(userId, "Ciao! Volevi confermare la prenotazione? Fammi sapere!");
+          delete pendingConfirmations[userId];
+        }, 60 * 60 * 1000);
+      }
     }
   }
 
