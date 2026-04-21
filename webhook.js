@@ -140,7 +140,8 @@ app.post("/webhook/:businessId", async (req, res) => {
 Appuntamenti oggi: ${slots.length > 0 ? slots.map(e => e.summary + " alle " + new Date(e.start.dateTime).toLocaleTimeString("it-IT", {hour: "2-digit", minute: "2-digit", timeZone: "Europe/Rome"})).join(", ") : "nessuno"}
 Appuntamenti domani: ${slotsTomorrow.length > 0 ? slotsTomorrow.map(e => e.summary + " alle " + new Date(e.start.dateTime).toLocaleTimeString("it-IT", {hour: "2-digit", minute: "2-digit", timeZone: "Europe/Rome"})).join(", ") : "nessuno"}`;
 
-  const fullSystem = systemPrompt + "\n\n" + slotsInfo;
+  const today_date = new Date().toLocaleDateString("it-IT", {timeZone: "Europe/Rome", weekday: "long", year: "numeric", month: "long", day: "numeric"});
+const fullSystem = systemPrompt + "\n\nOggi è " + today_date + "\n\n" + slotsInfo;
 
   const response = await client.messages.create({
     model: "claude-sonnet-4-5",
