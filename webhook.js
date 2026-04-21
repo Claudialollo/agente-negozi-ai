@@ -121,16 +121,20 @@ function generatePDF(events, title) {
 async function sendEmail(to, subject, text, pdfBuffer, pdfFilename) {
   const attachments = pdfBuffer ? [{
     filename: pdfFilename,
-    content: pdfBuffer,
+    content: pdfBuffer.toString("base64"),
+    type: "application/pdf",
   }] : [];
 
-  await resend.emails.send({
+  const result = await resend.emails.send({
     from: "Agente Negozi <onboarding@resend.dev>",
     to,
     subject,
     text,
     attachments,
   });
+
+  console.log("Risultato Resend:", JSON.stringify(result));
+  return result;
 }
 
 async function sendDailyRecap(business) {
@@ -262,8 +266,13 @@ app.post("/webhook/:businessId", async (req, res) => {
 
   const isOwner = business.ownerPhones.includes(userId);
 
+  console.log(`Messaggio da ${userId} — titolare: ${isOwner} — testo: ${userText}`);
+  console.log(`PDF in attesa: ${pendingPDF[userId] ? "sì" : "no"}`);
+
   if (isOwner && pendingPDF[userId]) {
+    console.log("Controllo risposta sì/no per PDF...");
     if (["sì", "si", "s", "yes", "sí"].includes(userText)) {
+      console.log("Invio email PDF...");
       const { pdfBuffer, titoloPDF, tipo, today_iso } = pendingPDF[userId];
       try {
         await sendEmail(
@@ -273,6 +282,7 @@ app.post("/webhook/:businessId", async (req, res) => {
           pdfBuffer,
           `${tipo}_${today_iso}.pdf`
         );
+        console.log("Email inviata con successo!");
         delete pendingPDF[userId];
         await sendWhatsAppMessage(userId, `PDF inviato! Controlla la tua email ${process.env.OWNER_EMAIL}.`);
       } catch (err) {
@@ -281,6 +291,7 @@ app.post("/webhook/:businessId", async (req, res) => {
       }
       return res.sendStatus(200);
     } else if (["no", "n"].includes(userText)) {
+      console.log("Titolare ha rifiutato email");
       delete pendingPDF[userId];
       await sendWhatsAppMessage(userId, "Ok, nessuna email. A presto!");
       return res.sendStatus(200);
@@ -329,6 +340,7 @@ app.post("/webhook/:businessId", async (req, res) => {
       const titoloPDF = tipo === "settimana" ? "Appuntamenti della settimana" : "Appuntamenti del mese";
       const pdfBuffer = await generatePDF(events, titoloPDF);
       pendingPDF[userId] = { pdfBuffer, titoloPDF, tipo, today_iso };
+      console.log(`PDF generato e salvato per ${userId}`);
       reply = reply.replace(/GENERA_PDF:(settimana|mese)/, "").trim();
     }
   }
