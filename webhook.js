@@ -192,11 +192,13 @@ ${business.ownerName} può chiederti di:
 - Modificare appuntamenti — scrivi CANCELLA:Nome poi PRENOTA:Nome,Servizio,YYYY-MM-DDTHH:MM:00
 - Vedere gli appuntamenti dei prossimi 3 mesi — li trovi qui sotto
 - Chiedere info su un cliente specifico
-- Chiedere un riepilogo settimanale o mensile — scrivi GENERA_PDF:settimana oppure GENERA_PDF:mese
+- Chiedere un riepilogo settimanale o mensile
 
-Quando generi un riepilogo, mostra sempre il testo e poi chiedi:
-"Vuoi ricevere il PDF anche via email? Rispondi sì o no."
-
+ISTRUZIONE CRITICA PER PDF: Quando il titolare chiede un PDF o riepilogo settimanale/mensile, devi fare ESATTAMENTE queste cose in ordine:
+1. Mostra il riepilogo testuale degli appuntamenti
+2. Scrivi OBBLIGATORIAMENTE questa riga esatta: GENERA_PDF:settimana oppure GENERA_PDF:mese
+3. Chiedi: "Vuoi riceverlo via email? Rispondi sì o no."
+NON dire mai di aver inviato il PDF — non puoi farlo direttamente. Il sistema lo farà automaticamente quando scrivi GENERA_PDF:.
 REGOLA: Non accettare mai date passate rispetto a ${today_iso}.
 
 Appuntamenti prossimi 3 mesi:
