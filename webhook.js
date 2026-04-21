@@ -88,15 +88,16 @@ Quando un cliente chiede disponibilità per una data, controllala sempre prima d
 Quando confermi una prenotazione chiedi sempre nome, servizio e orario preciso.
 
 Per CREARE una prenotazione, scrivi ESATTAMENTE alla fine del messaggio:
-PRENOTA:Nome,Servizio,2026-04-16T15:00:00
-Usa l'ora italiana esatta (es. 15:00 per le 15 di pomeriggio).
+PRENOTA:Nome,Servizio,YYYY-MM-DDTHH:MM:00
+Esempio per oggi 21 aprile alle 15:00: PRENOTA:Mario,Taglio uomo,2026-04-21T15:00:00
+Usa sempre la data corretta basandoti sulla data di oggi che ti viene fornita.
 
 Per CANCELLARE una prenotazione, scrivi ESATTAMENTE alla fine del messaggio:
 CANCELLA:Nome
 
 Per MODIFICARE una prenotazione, prima cancella quella vecchia poi crea quella nuova:
 CANCELLA:Nome
-PRENOTA:Nome,Servizio,2026-04-16T16:00:00
+PRENOTA:Nome,Servizio,YYYY-MM-DDTHH:MM:00
 
 Tono: cordiale e professionale, usa il tu.`
 };
@@ -141,7 +142,7 @@ Appuntamenti oggi: ${slots.length > 0 ? slots.map(e => e.summary + " alle " + ne
 Appuntamenti domani: ${slotsTomorrow.length > 0 ? slotsTomorrow.map(e => e.summary + " alle " + new Date(e.start.dateTime).toLocaleTimeString("it-IT", {hour: "2-digit", minute: "2-digit", timeZone: "Europe/Rome"})).join(", ") : "nessuno"}`;
 
   const today_date = new Date().toLocaleDateString("it-IT", {timeZone: "Europe/Rome", weekday: "long", year: "numeric", month: "long", day: "numeric"});
-const fullSystem = systemPrompt + "\n\nOggi è " + today_date + "\n\n" + slotsInfo;
+  const fullSystem = systemPrompt + "\n\nOggi è " + today_date + "\n\n" + slotsInfo;
 
   const response = await client.messages.create({
     model: "claude-sonnet-4-5",
