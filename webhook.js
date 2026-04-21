@@ -1,6 +1,9 @@
 import Anthropic from "@anthropic-ai/sdk";
 import express from "express";
 import { google } from "googleapis";
+import cron from "node-cron";
+import nodemailer from "nodemailer";
+import PDFDocument from "pdfkit";
 
 const app = express();
 app.use(express.json());
@@ -14,6 +17,14 @@ const auth = new google.auth.GoogleAuth({
   scopes: ["https://www.googleapis.com/auth/calendar"],
 });
 const calendar = google.calendar({ version: "v3", auth });
+
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_PASSWORD,
+  },
+});
 
 async function getSlotsByRange(dateFrom, dateTo) {
   const response = await calendar.events.list({
@@ -30,7 +41,7 @@ async function getSlotsByRange(dateFrom, dateTo) {
 async function createAppointment(customerName, service, dateTimeLocal) {
   const [datePart, timePart] = dateTimeLocal.split("T");
   const [year, month, day] = datePart.split("-").map(Number);
-  const [hour, minute] = timePart.replace("Z","").split(":").map(Number);
+  const [hour, minute] = timePart.replace("Z", "").split(":").map(Number);
 
   const start = new Date(Date.UTC(year, month - 1, day, hour - 2, minute));
   const end = new Date(start.getTime() + 60 * 60 * 1000);
@@ -77,10 +88,75 @@ async function deleteAppointmentByName(customerName) {
 function formatEvents(events) {
   if (events.length === 0) return "nessuno";
   return events.map(e => {
-    const date = new Date(e.start.dateTime).toLocaleDateString("it-IT", {weekday: "long", day: "numeric", month: "long", timeZone: "Europe/Rome"});
-    const time = new Date(e.start.dateTime).toLocaleTimeString("it-IT", {hour: "2-digit", minute: "2-digit", timeZone: "Europe/Rome"});
+    const date = new Date(e.start.dateTime).toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long", timeZone: "Europe/Rome" });
+    const time = new Date(e.start.dateTime).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Rome" });
     return `${e.summary} — ${date} alle ${time}`;
   }).join("\n");
+}
+
+function generatePDF(events, title) {
+  return new Promise((resolve) => {
+    const doc = new PDFDocument({ margin: 50 });
+    const chunks = [];
+
+    doc.on("data", chunk => chunks.push(chunk));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+
+    doc.fontSize(20).font("Helvetica-Bold").text(title, { align: "center" });
+    doc.moveDown();
+    doc.fontSize(12).font("Helvetica").text(`Generato il ${new Date().toLocaleDateString("it-IT", { timeZone: "Europe/Rome" })} alle ${new Date().toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Rome" })}`, { align: "center" });
+    doc.moveDown(2);
+
+    if (events.length === 0) {
+      doc.fontSize(14).text("Nessun appuntamento programmato.", { align: "center" });
+    } else {
+      events.forEach((e, i) => {
+        const date = new Date(e.start.dateTime).toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long", timeZone: "Europe/Rome" });
+        const time = new Date(e.start.dateTime).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Rome" });
+
+        doc.fontSize(13).font("Helvetica-Bold").text(`${i + 1}. ${e.summary}`);
+        doc.fontSize(11).font("Helvetica").text(`   ${date} alle ${time}`);
+        doc.moveDown(0.5);
+      });
+    }
+
+    doc.end();
+  });
+}
+
+async function sendDailyRecap(business) {
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowEnd = new Date(tomorrow);
+  tomorrowEnd.setHours(23, 59, 59, 999);
+
+  const events = await getSlotsByRange(tomorrow, tomorrowEnd);
+
+  const tomorrowDate = tomorrow.toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long", timeZone: "Europe/Rome" });
+  const title = `Appuntamenti di ${tomorrowDate}`;
+
+  const testoRecap = events.length > 0
+    ? `Ciao ${business.ownerName}! Ecco gli appuntamenti di domani (${tomorrowDate}):\n\n${formatEvents(events)}`
+    : `Ciao ${business.ownerName}! Domani (${tomorrowDate}) non hai appuntamenti in agenda.`;
+
+  const pdfBuffer = await generatePDF(events, title);
+
+  await transporter.sendMail({
+    from: process.env.GMAIL_USER,
+    to: process.env.OWNER_EMAIL,
+    subject: `Recap appuntamenti — ${tomorrowDate}`,
+    text: testoRecap,
+    attachments: [{
+      filename: `recap_${tomorrow.toISOString().split("T")[0]}.pdf`,
+      content: pdfBuffer,
+    }]
+  });
+
+  for (const phone of business.ownerPhones) {
+    await sendWhatsAppMessage(phone, testoRecap);
+  }
+
+  console.log(`Recap inviato per ${business.name}`);
 }
 
 const businesses = {
@@ -107,6 +183,7 @@ ${business.ownerName} può chiederti di:
 - Modificare appuntamenti — scrivi CANCELLA:Nome poi PRENOTA:Nome,Servizio,YYYY-MM-DDTHH:MM:00
 - Vedere gli appuntamenti dei prossimi 3 mesi — li trovi qui sotto
 - Chiedere info su un cliente specifico
+- Chiedere un PDF con gli appuntamenti settimanali o mensili — scrivi GENERA_PDF:settimana oppure GENERA_PDF:mese
 
 REGOLA: Non accettare mai date passate rispetto a ${today_iso}.
 
@@ -127,7 +204,7 @@ Puoi aiutare il cliente a:
 
 Quando confermi una prenotazione chiedi sempre nome, servizio e orario preciso.
 
-REGOLA FONDAMENTALE: Non accettare mai prenotazioni per date precedenti a ${today_iso}. Se il cliente chiede una data passata, digli subito che non è possibile e suggerisci una data futura.
+REGOLA FONDAMENTALE: Non accettare mai prenotazioni per date precedenti a ${today_iso}.
 
 Per CREARE una prenotazione scrivi ESATTAMENTE alla fine del messaggio:
 PRENOTA:Nome,Servizio,YYYY-MM-DDTHH:MM:00
@@ -144,6 +221,13 @@ Tono: cordiale e professionale, usa il tu.
 Appuntamenti prossimi 30 giorni:
 ${slotsInfo}`;
 }
+
+cron.schedule("0 20 * * *", async () => {
+  console.log("Job serale avviato — invio recap...");
+  for (const businessId of Object.keys(businesses)) {
+    await sendDailyRecap(businesses[businessId]);
+  }
+}, { timezone: "Europe/Rome" });
 
 app.get("/webhook/:businessId", (req, res) => {
   const mode = req.query["hub.mode"];
@@ -172,7 +256,7 @@ app.post("/webhook/:businessId", async (req, res) => {
 
   const today = new Date();
   const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const today_date = today.toLocaleDateString("it-IT", {timeZone: "Europe/Rome", weekday: "long", year: "numeric", month: "long", day: "numeric"});
+  const today_date = today.toLocaleDateString("it-IT", { timeZone: "Europe/Rome", weekday: "long", year: "numeric", month: "long", day: "numeric" });
   const today_iso = today.toISOString().split("T")[0];
 
   let slotsInfo;
@@ -201,6 +285,32 @@ app.post("/webhook/:businessId", async (req, res) => {
   });
 
   let reply = response.content[0].text;
+
+  if (reply.includes("GENERA_PDF:")) {
+    const pdfMatch = reply.match(/GENERA_PDF:(settimana|mese)/);
+    if (pdfMatch && isOwner) {
+      const tipo = pdfMatch[1];
+      const giorni = tipo === "settimana" ? 7 : 30;
+      const fine = new Date(today.getTime() + giorni * 24 * 60 * 60 * 1000);
+      const events = await getSlotsByRange(today, fine);
+      const titoloPDF = tipo === "settimana" ? "Appuntamenti della settimana" : "Appuntamenti del mese";
+      const pdfBuffer = await generatePDF(events, titoloPDF);
+
+      await transporter.sendMail({
+        from: process.env.GMAIL_USER,
+        to: process.env.OWNER_EMAIL,
+        subject: titoloPDF,
+        text: `Ciao ${business.ownerName}! In allegato trovi il PDF con gli appuntamenti della ${tipo}.`,
+        attachments: [{
+          filename: `${tipo}_${today_iso}.pdf`,
+          content: pdfBuffer,
+        }]
+      });
+
+      reply = reply.replace(/GENERA_PDF:(settimana|mese)/, "").trim();
+      reply += `\n\nTi ho inviato il PDF con gli appuntamenti della ${tipo} via email!`;
+    }
+  }
 
   if (reply.includes("CANCELLA:")) {
     const cancelMatch = reply.match(/CANCELLA:([^\n]+)/);
