@@ -10,6 +10,7 @@ app.use(express.json());
 
 const client = new Anthropic();
 const conversations = {};
+const pendingPDF = {};
 
 const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
 const auth = new google.auth.GoogleAuth({
@@ -135,7 +136,6 @@ async function sendDailyRecap(business) {
   tomorrowEnd.setHours(23, 59, 59, 999);
 
   const events = await getSlotsByRange(tomorrow, tomorrowEnd);
-
   const tomorrowDate = tomorrow.toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long", timeZone: "Europe/Rome" });
   const title = `Appuntamenti di ${tomorrowDate}`;
 
@@ -157,7 +157,7 @@ async function sendDailyRecap(business) {
   });
 
   for (const phone of business.ownerPhones) {
-    await sendWhatsAppMessage(phone, testoRecap);
+    await sendWhatsAppMessage(phone, testoRecap + "\n\nTi ho inviato anche il PDF via email!");
   }
 
   console.log(`Recap inviato per ${business.name}`);
@@ -187,7 +187,15 @@ ${business.ownerName} può chiederti di:
 - Modificare appuntamenti — scrivi CANCELLA:Nome poi PRENOTA:Nome,Servizio,YYYY-MM-DDTHH:MM:00
 - Vedere gli appuntamenti dei prossimi 3 mesi — li trovi qui sotto
 - Chiedere info su un cliente specifico
-- Chiedere un PDF con gli appuntamenti settimanali o mensili — scrivi GENERA_PDF:settimana oppure GENERA_PDF:mese
+- Chiedere un riepilogo settimanale o mensile — scrivi GENERA_PDF:settimana oppure GENERA_PDF:mese
+
+IMPORTANTE per i PDF:
+Quando il titolare chiede un PDF o un riepilogo settimanale/mensile:
+1. Mostra il riepilogo testuale degli appuntamenti
+2. Scrivi GENERA_PDF:settimana o GENERA_PDF:mese alla fine
+3. Chiedi: "Vuoi ricevere il PDF anche via email?"
+Se il titolare risponde sì alla email, scrivi INVIA_EMAIL_PDF alla fine del messaggio.
+Se il titolare risponde no, non fare nulla.
 
 REGOLA: Non accettare mai date passate rispetto a ${today_iso}.
 
@@ -300,20 +308,29 @@ app.post("/webhook/:businessId", async (req, res) => {
       const titoloPDF = tipo === "settimana" ? "Appuntamenti della settimana" : "Appuntamenti del mese";
       const pdfBuffer = await generatePDF(events, titoloPDF);
 
-      await transporter.sendMail({
-        from: process.env.GMAIL_USER,
-        to: process.env.OWNER_EMAIL,
-        subject: titoloPDF,
-        text: `Ciao ${business.ownerName}! In allegato trovi il PDF con gli appuntamenti della ${tipo}.`,
-        attachments: [{
-          filename: `${tipo}_${today_iso}.pdf`,
-          content: pdfBuffer,
-        }]
-      });
+      pendingPDF[userId] = { pdfBuffer, titoloPDF, tipo, today_iso };
 
       reply = reply.replace(/GENERA_PDF:(settimana|mese)/, "").trim();
-      reply += `\n\nTi ho inviato il PDF con gli appuntamenti della ${tipo} via email!`;
     }
+  }
+
+  if (reply.includes("INVIA_EMAIL_PDF") && isOwner && pendingPDF[userId]) {
+    const { pdfBuffer, titoloPDF, tipo, today_iso: iso } = pendingPDF[userId];
+
+    await transporter.sendMail({
+      from: process.env.GMAIL_USER,
+      to: process.env.OWNER_EMAIL,
+      subject: titoloPDF,
+      text: `Ciao ${business.ownerName}! In allegato trovi il PDF con gli appuntamenti della ${tipo}.`,
+      attachments: [{
+        filename: `${tipo}_${iso}.pdf`,
+        content: pdfBuffer,
+      }]
+    });
+
+    delete pendingPDF[userId];
+    reply = reply.replace(/INVIA_EMAIL_PDF/, "").trim();
+    reply += "\n\nPDF inviato via email!";
   }
 
   if (reply.includes("CANCELLA:")) {
