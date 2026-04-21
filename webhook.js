@@ -19,11 +19,16 @@ const auth = new google.auth.GoogleAuth({
 const calendar = google.calendar({ version: "v3", auth });
 
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host: "smtp.gmail.com",
+  port: 465,
+  secure: true,
   auth: {
     user: process.env.GMAIL_USER,
     pass: process.env.GMAIL_PASSWORD,
   },
+  tls: {
+    rejectUnauthorized: false
+  }
 });
 
 async function getSlotsByRange(dateFrom, dateTo) {
@@ -113,7 +118,6 @@ function generatePDF(events, title) {
       events.forEach((e, i) => {
         const date = new Date(e.start.dateTime).toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long", timeZone: "Europe/Rome" });
         const time = new Date(e.start.dateTime).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Rome" });
-
         doc.fontSize(13).font("Helvetica-Bold").text(`${i + 1}. ${e.summary}`);
         doc.fontSize(11).font("Helvetica").text(`   ${date} alle ${time}`);
         doc.moveDown(0.5);
@@ -286,9 +290,9 @@ app.post("/webhook/:businessId", async (req, res) => {
 
   let reply = response.content[0].text;
 
-  if (reply.includes("GENERA_PDF:")) {
+  if (reply.includes("GENERA_PDF:") && isOwner) {
     const pdfMatch = reply.match(/GENERA_PDF:(settimana|mese)/);
-    if (pdfMatch && isOwner) {
+    if (pdfMatch) {
       const tipo = pdfMatch[1];
       const giorni = tipo === "settimana" ? 7 : 30;
       const fine = new Date(today.getTime() + giorni * 24 * 60 * 60 * 1000);
