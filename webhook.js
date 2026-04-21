@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import express from "express";
 import { google } from "googleapis";
 import cron from "node-cron";
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 import PDFDocument from "pdfkit";
 
 const app = express();
@@ -19,18 +19,7 @@ const auth = new google.auth.GoogleAuth({
 });
 const calendar = google.calendar({ version: "v3", auth });
 
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 465,
-  secure: true,
-  auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_PASSWORD,
-  },
-  tls: {
-    rejectUnauthorized: false
-  }
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 async function getSlotsByRange(dateFrom, dateTo) {
   const response = await calendar.events.list({
@@ -129,6 +118,21 @@ function generatePDF(events, title) {
   });
 }
 
+async function sendEmail(to, subject, text, pdfBuffer, pdfFilename) {
+  const attachments = pdfBuffer ? [{
+    filename: pdfFilename,
+    content: pdfBuffer,
+  }] : [];
+
+  await resend.emails.send({
+    from: "Agente Negozi <onboarding@resend.dev>",
+    to,
+    subject,
+    text,
+    attachments,
+  });
+}
+
 async function sendDailyRecap(business) {
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
@@ -145,16 +149,13 @@ async function sendDailyRecap(business) {
 
   const pdfBuffer = await generatePDF(events, title);
 
-  await transporter.sendMail({
-    from: process.env.GMAIL_USER,
-    to: process.env.OWNER_EMAIL,
-    subject: `Recap appuntamenti — ${tomorrowDate}`,
-    text: testoRecap,
-    attachments: [{
-      filename: `recap_${tomorrow.toISOString().split("T")[0]}.pdf`,
-      content: pdfBuffer,
-    }]
-  });
+  await sendEmail(
+    process.env.OWNER_EMAIL,
+    `Recap appuntamenti — ${tomorrowDate}`,
+    testoRecap,
+    pdfBuffer,
+    `recap_${tomorrow.toISOString().split("T")[0]}.pdf`
+  );
 
   for (const phone of business.ownerPhones) {
     await sendWhatsAppMessage(phone, testoRecap + "\n\nTi ho inviato anche il PDF via email!");
@@ -261,28 +262,25 @@ app.post("/webhook/:businessId", async (req, res) => {
 
   const isOwner = business.ownerPhones.includes(userId);
 
-  // Gestione risposta sì/no per PDF in attesa
   if (isOwner && pendingPDF[userId]) {
-    if (userText === "sì" || userText === "si" || userText === "s" || userText === "yes") {
+    if (["sì", "si", "s", "yes", "sí"].includes(userText)) {
       const { pdfBuffer, titoloPDF, tipo, today_iso } = pendingPDF[userId];
       try {
-        await transporter.sendMail({
-          from: process.env.GMAIL_USER,
-          to: process.env.OWNER_EMAIL,
-          subject: titoloPDF,
-          text: `Ciao ${business.ownerName}! In allegato trovi il PDF con gli appuntamenti della ${tipo}.`,
-          attachments: [{
-            filename: `${tipo}_${today_iso}.pdf`,
-            content: pdfBuffer,
-          }]
-        });
+        await sendEmail(
+          process.env.OWNER_EMAIL,
+          titoloPDF,
+          `Ciao ${business.ownerName}! In allegato trovi il PDF con gli appuntamenti della ${tipo}.`,
+          pdfBuffer,
+          `${tipo}_${today_iso}.pdf`
+        );
         delete pendingPDF[userId];
         await sendWhatsAppMessage(userId, `PDF inviato! Controlla la tua email ${process.env.OWNER_EMAIL}.`);
       } catch (err) {
+        console.error("Errore invio email:", err);
         await sendWhatsAppMessage(userId, "Errore nell'invio email. Riprova tra poco.");
       }
       return res.sendStatus(200);
-    } else if (userText === "no" || userText === "n") {
+    } else if (["no", "n"].includes(userText)) {
       delete pendingPDF[userId];
       await sendWhatsAppMessage(userId, "Ok, nessuna email. A presto!");
       return res.sendStatus(200);
@@ -330,7 +328,6 @@ app.post("/webhook/:businessId", async (req, res) => {
       const events = await getSlotsByRange(today, fine);
       const titoloPDF = tipo === "settimana" ? "Appuntamenti della settimana" : "Appuntamenti del mese";
       const pdfBuffer = await generatePDF(events, titoloPDF);
-
       pendingPDF[userId] = { pdfBuffer, titoloPDF, tipo, today_iso };
       reply = reply.replace(/GENERA_PDF:(settimana|mese)/, "").trim();
     }
