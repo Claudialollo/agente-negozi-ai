@@ -86,11 +86,11 @@ Orari: Lun-Sab 9:00-19:00. Chiuso domenica.
 Servizi: Taglio uomo €15, Barba €10, Taglio + Barba €22.
 Quando un cliente chiede disponibilità per una data, controllala sempre prima di confermare.
 Quando confermi una prenotazione chiedi sempre nome, servizio e orario preciso.
-Non accettare mai prenotazioni per date passate. Se il cliente chiede una data già passata, digli gentilmente che non è possibile e chiedi una data futura.
+
+REGOLA FONDAMENTALE: La data di oggi ti viene fornita ad ogni messaggio. Qualsiasi data precedente a oggi è nel passato. Non puoi accettare prenotazioni per il passato. Se il cliente chiede una data passata, rispondi IMMEDIATAMENTE che non è possibile e suggerisci una data futura. Non chiedere altri dettagli, non andare avanti con la prenotazione.
 
 Per CREARE una prenotazione, scrivi ESATTAMENTE alla fine del messaggio:
 PRENOTA:Nome,Servizio,YYYY-MM-DDTHH:MM:00
-Esempio per oggi 21 aprile alle 15:00: PRENOTA:Mario,Taglio uomo,2026-04-21T15:00:00
 Usa sempre la data corretta basandoti sulla data di oggi che ti viene fornita.
 
 Per CANCELLARE una prenotazione, scrivi ESATTAMENTE alla fine del messaggio:
@@ -127,12 +127,14 @@ app.post("/webhook/:businessId", async (req, res) => {
   const isOwner = ownerPhones.includes(userId);
   const userText = message.text.body;
 
+  const today = new Date();
+  const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
   if (!conversations[userId]) conversations[userId] = [];
   conversations[userId].push({ role: "user", content: userText });
 
   const systemPrompt = businesses[businessId] || "Sei un assistente virtuale utile.";
 
-  const today = new Date();
   const slots = await getAvailableSlots(today);
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
@@ -143,7 +145,8 @@ Appuntamenti oggi: ${slots.length > 0 ? slots.map(e => e.summary + " alle " + ne
 Appuntamenti domani: ${slotsTomorrow.length > 0 ? slotsTomorrow.map(e => e.summary + " alle " + new Date(e.start.dateTime).toLocaleTimeString("it-IT", {hour: "2-digit", minute: "2-digit", timeZone: "Europe/Rome"})).join(", ") : "nessuno"}`;
 
   const today_date = new Date().toLocaleDateString("it-IT", {timeZone: "Europe/Rome", weekday: "long", year: "numeric", month: "long", day: "numeric"});
-  const fullSystem = systemPrompt + "\n\nOggi è " + today_date + "\n\n" + slotsInfo;
+  const today_iso = today.toISOString().split("T")[0];
+  const fullSystem = systemPrompt + "\n\nOggi è " + today_date + " (" + today_iso + "). Non accettare date precedenti a " + today_iso + ".\n\n" + slotsInfo;
 
   const response = await client.messages.create({
     model: "claude-sonnet-4-5",
@@ -172,8 +175,10 @@ Appuntamenti domani: ${slotsTomorrow.length > 0 ? slotsTomorrow.map(e => e.summa
       const [, nome, servizio, dataOra] = prenotaMatch;
 
       const appointmentDate = new Date(dataOra);
-      if (appointmentDate < new Date()) {
-        reply = "Mi dispiace, non posso prenotare per una data già passata. Scegli una data futura!";
+      const appointmentMidnight = new Date(appointmentDate.getFullYear(), appointmentDate.getMonth(), appointmentDate.getDate());
+
+      if (appointmentMidnight < todayMidnight) {
+        reply = "Mi dispiace, non posso prenotare per una data già passata. Scegli una data a partire da oggi!";
         await sendWhatsAppMessage(userId, reply);
         return res.sendStatus(200);
       }
