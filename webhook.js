@@ -15,21 +15,15 @@ const auth = new google.auth.GoogleAuth({
 });
 const calendar = google.calendar({ version: "v3", auth });
 
-async function getAvailableSlots(date) {
-  const startOfDay = new Date(date);
-  startOfDay.setHours(9, 0, 0, 0);
-  const endOfDay = new Date(date);
-  endOfDay.setHours(19, 0, 0, 0);
-
+async function getSlotsByRange(dateFrom, dateTo) {
   const response = await calendar.events.list({
     calendarId: process.env.GOOGLE_CALENDAR_ID,
-    timeMin: startOfDay.toISOString(),
-    timeMax: endOfDay.toISOString(),
+    timeMin: dateFrom.toISOString(),
+    timeMax: dateTo.toISOString(),
     singleEvents: true,
     orderBy: "startTime",
     timeZone: "Europe/Rome",
   });
-
   return response.data.items || [];
 }
 
@@ -55,7 +49,7 @@ async function createAppointment(customerName, service, dateTimeLocal) {
 
 async function deleteAppointmentByName(customerName) {
   const now = new Date();
-  const future = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+  const future = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
 
   const response = await calendar.events.list({
     calendarId: process.env.GOOGLE_CALENDAR_ID,
@@ -80,6 +74,15 @@ async function deleteAppointmentByName(customerName) {
   return false;
 }
 
+function formatEvents(events) {
+  if (events.length === 0) return "nessuno";
+  return events.map(e => {
+    const date = new Date(e.start.dateTime).toLocaleDateString("it-IT", {weekday: "long", day: "numeric", month: "long", timeZone: "Europe/Rome"});
+    const time = new Date(e.start.dateTime).toLocaleTimeString("it-IT", {hour: "2-digit", minute: "2-digit", timeZone: "Europe/Rome"});
+    return `${e.summary} — ${date} alle ${time}`;
+  }).join("\n");
+}
+
 const businesses = {
   "negozio1": {
     name: "Barber Shop Roma",
@@ -95,18 +98,19 @@ const pendingConfirmations = {};
 
 function getOwnerSystemPrompt(business, slotsInfo, today_date, today_iso) {
   return `Sei l'assistente personale di ${business.ownerName}, titolare di ${business.name}.
-Stai parlando con ${business.ownerName} — il titolare. Chiamalo sempre per nome.
+Stai parlando con ${business.ownerName} — il titolare. Chiamala sempre per nome.
 Oggi è ${today_date} (${today_iso}).
 
 ${business.ownerName} può chiederti di:
 - Aggiungere appuntamenti presi per telefono — scrivi PRENOTA:Nome,Servizio,YYYY-MM-DDTHH:MM:00
 - Cancellare appuntamenti — scrivi CANCELLA:Nome
 - Modificare appuntamenti — scrivi CANCELLA:Nome poi PRENOTA:Nome,Servizio,YYYY-MM-DDTHH:MM:00
-- Vedere gli appuntamenti di oggi e domani — li trovi qui sotto
+- Vedere gli appuntamenti dei prossimi 3 mesi — li trovi qui sotto
 - Chiedere info su un cliente specifico
 
 REGOLA: Non accettare mai date passate rispetto a ${today_iso}.
 
+Appuntamenti prossimi 3 mesi:
 ${slotsInfo}`;
 }
 
@@ -137,6 +141,7 @@ PRENOTA:Nome,Servizio,YYYY-MM-DDTHH:MM:00
 
 Tono: cordiale e professionale, usa il tu.
 
+Appuntamenti prossimi 30 giorni:
 ${slotsInfo}`;
 }
 
@@ -170,13 +175,16 @@ app.post("/webhook/:businessId", async (req, res) => {
   const today_date = today.toLocaleDateString("it-IT", {timeZone: "Europe/Rome", weekday: "long", year: "numeric", month: "long", day: "numeric"});
   const today_iso = today.toISOString().split("T")[0];
 
-  const slots = await getAvailableSlots(today);
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const slotsTomorrow = await getAvailableSlots(tomorrow);
-
-  const slotsInfo = `Appuntamenti oggi: ${slots.length > 0 ? slots.map(e => e.summary + " alle " + new Date(e.start.dateTime).toLocaleTimeString("it-IT", {hour: "2-digit", minute: "2-digit", timeZone: "Europe/Rome"})).join(", ") : "nessuno"}
-Appuntamenti domani: ${slotsTomorrow.length > 0 ? slotsTomorrow.map(e => e.summary + " alle " + new Date(e.start.dateTime).toLocaleTimeString("it-IT", {hour: "2-digit", minute: "2-digit", timeZone: "Europe/Rome"})).join(", ") : "nessuno"}`;
+  let slotsInfo;
+  if (isOwner) {
+    const threeMonths = new Date(today.getTime() + 90 * 24 * 60 * 60 * 1000);
+    const events = await getSlotsByRange(today, threeMonths);
+    slotsInfo = formatEvents(events);
+  } else {
+    const thirtyDays = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const events = await getSlotsByRange(today, thirtyDays);
+    slotsInfo = formatEvents(events);
+  }
 
   const systemPrompt = isOwner
     ? getOwnerSystemPrompt(business, slotsInfo, today_date, today_iso)
@@ -187,7 +195,7 @@ Appuntamenti domani: ${slotsTomorrow.length > 0 ? slotsTomorrow.map(e => e.summa
 
   const response = await client.messages.create({
     model: "claude-sonnet-4-5",
-    max_tokens: 400,
+    max_tokens: 500,
     system: systemPrompt,
     messages: conversations[userId].slice(-10)
   });
@@ -224,8 +232,8 @@ Appuntamenti domani: ${slotsTomorrow.length > 0 ? slotsTomorrow.map(e => e.summa
       reply = reply.replace(/PRENOTA:[^\n]+/g, "").trim();
       reply += "\n\nPrenotazione confermata!";
 
-      if (pendingConfirmations[userId]) clearTimeout(pendingConfirmations[userId]);
       if (!isOwner) {
+        if (pendingConfirmations[userId]) clearTimeout(pendingConfirmations[userId]);
         pendingConfirmations[userId] = setTimeout(async () => {
           await sendWhatsAppMessage(userId, "Ciao! Volevi confermare la prenotazione? Fammi sapere!");
           delete pendingConfirmations[userId];
