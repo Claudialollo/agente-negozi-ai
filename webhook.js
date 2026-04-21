@@ -86,6 +86,7 @@ Orari: Lun-Sab 9:00-19:00. Chiuso domenica.
 Servizi: Taglio uomo €15, Barba €10, Taglio + Barba €22.
 Quando un cliente chiede disponibilità per una data, controllala sempre prima di confermare.
 Quando confermi una prenotazione chiedi sempre nome, servizio e orario preciso.
+Non accettare mai prenotazioni per date passate. Se il cliente chiede una data già passata, digli gentilmente che non è possibile e chiedi una data futura.
 
 Per CREARE una prenotazione, scrivi ESATTAMENTE alla fine del messaggio:
 PRENOTA:Nome,Servizio,YYYY-MM-DDTHH:MM:00
@@ -169,6 +170,14 @@ Appuntamenti domani: ${slotsTomorrow.length > 0 ? slotsTomorrow.map(e => e.summa
     const prenotaMatch = reply.match(/PRENOTA:([^,]+),([^,]+),([^\n]+)/);
     if (prenotaMatch) {
       const [, nome, servizio, dataOra] = prenotaMatch;
+
+      const appointmentDate = new Date(dataOra);
+      if (appointmentDate < new Date()) {
+        reply = "Mi dispiace, non posso prenotare per una data già passata. Scegli una data futura!";
+        await sendWhatsAppMessage(userId, reply);
+        return res.sendStatus(200);
+      }
+
       await createAppointment(nome.trim(), servizio.trim(), dataOra.trim());
       reply = reply.replace(/PRENOTA:[^\n]+/g, "").trim();
       reply += "\n\nPrenotazione confermata! Ti aspettiamo.";
