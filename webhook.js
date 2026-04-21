@@ -83,7 +83,7 @@ async function deleteAppointmentByName(customerName) {
 const businesses = {
   "negozio1": {
     name: "Barber Shop Roma",
-    ownerName: "Marco",
+    ownerName: "Claudia",
     ownerPhones: process.env.OWNER_PHONES?.split(",") || [],
     calendarId: process.env.GOOGLE_CALENDAR_ID,
     hours: "Lun-Sab 9:00-19:00. Chiuso domenica.",
