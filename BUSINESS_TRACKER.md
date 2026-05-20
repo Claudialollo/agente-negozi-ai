@@ -1,4 +1,4 @@
-# Replai/MExU — Business Tracker
+# MExU — Business Tracker
 
 ## Prodotto
 Agente AI white-label per negozi locali su WhatsApp.
