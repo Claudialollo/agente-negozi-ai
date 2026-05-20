@@ -1,8 +1,8 @@
-# Replai — Business Tracker
+# Replai/MExU — Business Tracker
 
 ## Prodotto
 Agente AI white-label per negozi locali su WhatsApp.
-Nome brand: **Replai** — "Il tuo negozio non dorme mai."
+Nome brand: **MExU** — "Me for you. 24/7."
 
 ## Stack tecnico
 - Node.js + Express (webhook.js su GitHub)
@@ -32,26 +32,72 @@ Nome brand: **Replai** — "Il tuo negozio non dorme mai."
 - Crea, cancella e modifica appuntamenti
 - Blocca prenotazioni per date passate
 - Distinzione titolare / cliente per numero
-- Titolare chiamato per nome (Claudia)
+- Titolare chiamato per nome
 - Titolare vede appuntamenti 3 mesi
 - Cliente vede appuntamenti 30 giorni
 - Reminder automatico al cliente dopo 1 ora
 - Job schedulato alle 20:00 recap serale
 - Genera PDF settimanale/mensile on demand
 - Invia PDF via email con Resend
-- Landing page Replai creata
+- Landing page MExU creata su v0
 
-## Da fare
-- [ ] Creare primi 3 negozi nel codice
-- [ ] Pubblicare sito Replai su Vercel
-- [ ] Trovare primi clienti veri
-- [ ] Token WhatsApp permanente (dopo prima pubblicazione app Meta)
-- [ ] Dominio proprio per email Resend (es. replai.it)
+## Bug e problemi tecnici da risolvere 🔧
+- [ ] **URGENTE** — Token WhatsApp scade ogni 24h — risolvibile solo dopo pubblicazione app Meta
+- [ ] **URGENTE** — Conversazioni in RAM — si perdono ad ogni restart Railway → migrare su Supabase
+- [ ] Fuso orario appuntamenti — a volte crea all'ora sbagliata
+- [ ] Gestione errori AI — quando l'agente sbaglia non c'è sistema di notifica al titolare
+- [ ] Nessuna FAQ personalizzabile per negozio — se cliente chiede qualcosa di specifico l'agente non sa rispondere
+
+## Feedback da utenti Reddit 📝
+**Utente 1 — commento su calendario e domande specifiche:**
+- ✅ Apprezza l'idea di usare WhatsApp (già installato)
+- ✅ Conferma mercato reale (barbiere con libretto cartaceo)
+- ✅ Apprezza il recap serale
+- ❓ Chiede: gestione conflitti calendario se slot già occupato
+- ❓ Chiede: cosa succede se cliente chiede qualcosa di troppo specifico (es. prodotto specifico)
+
+**Utente 2 — commento su onboarding e scalabilità:**
+- ✅ Conferma che il problema principale non è il codice ma l'onboarding
+- ⚠️ Avverte: spiegare sempre le stesse cose agli utenti brucia l'energia e non scala
+- 💡 Consiglia Supabase per persistenza dati
+- 💡 Consiglia Runable per automatizzare docs e onboarding
+- ⚠️ Onboarding manuale non scala oltre 10-15 clienti
+
+## Problemi di prodotto da risolvere (medio termine) 🛠️
+- [ ] Database persistente con Supabase
+- [ ] Pannello di controllo per il titolare
+- [ ] Onboarding self-service automatizzato
+- [ ] Documentazione semplice per negozianti non tech
+- [ ] Sistema di notifica al titolare quando l'agente sbaglia
+- [ ] FAQ personalizzabile per ogni negozio
+- [ ] Valutare Runable per docs e dashboard
+
+## Da fare — priorità immediate
+- [ ] Apri partita IVA (agenziaentrate.gov.it, SPID, gratis)
+- [ ] Deploya sito MExU su Vercel
+- [ ] Verifica Business Manager Meta con partita IVA
+- [ ] Acquista numero Twilio (~€1/mese)
+- [ ] Pubblica app Meta → token permanente
+- [ ] Apri Stripe per incassare
+- [ ] Crea 3 negozi nel codice
+- [ ] Trova primi 5 clienti tester
+
+## Marketing attivo 📣
+- Pagina LinkedIn MExU creata: linkedin.com/company/mexu-ai
+- Google Form tester: https://forms.gle/T1RrC2c2mnbGfARA8
+- Post pubblicati su: LinkedIn, Reddit (r/startupfeedback, altri)
+- Messaggi pronti per: Facebook groups, Telegram, Reddit IT/EN
 
 ## Pricing
-- Starter: €39/mese (WhatsApp, 500 msg/mese)
-- Pro: €69/mese (WhatsApp + Instagram, illimitato)
-- Business: €99/mese (fino a 3 sedi, analytics)
+- Starter: €39/mese
+- Pro: €69/mese (featured)
+- Business: €99/mese
+
+## Brand
+- Nome: MExU
+- Tagline: "Me for you. 24/7." / "Il tuo negozio non dorme mai."
+- Colori: #080B14 (sfondo) · #0A5FFF (blu elettrico) · #FF6B35 (arancio)
+- Font: Montserrat Bold
 
 ## Come aggiungere un nuovo negozio
 Nel codice webhook.js aggiungere in `businesses`:
@@ -65,13 +111,13 @@ Nel codice webhook.js aggiungere in `businesses`:
   services: "Servizio 1 €X, Servizio 2 €X.",
 }
 ```
-Poi aggiungere webhook su Meta Developer per negozio2.
 
 ## Note importanti
 - WHATSAPP_TOKEN va aggiornato ogni mattina su Railway
-- Resend in modalità free manda email solo a agentiai2026@gmail.com
-- Per mandare email a clienti reali serve dominio verificato su resend.com
-- Token WhatsApp permanente richiede app Meta pubblicata
+- Resend free manda email solo a agentiai2026@gmail.com
+- Per email a clienti reali serve dominio verificato su resend.com
+- Token permanente richiede app Meta pubblicata
+- Conversazioni in RAM — si perdono ad ogni restart
 
 ## Prossima sessione — inizia con:
 "Leggi il BUSINESS_TRACKER e riprendiamo da dove eravamo"
